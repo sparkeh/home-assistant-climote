@@ -1,16 +1,12 @@
 {
-  "domain": "climate_climote",
-  "name": "Climote | Smart Heating Controls",
+  "domain": "climote",
+  "name": "Climote Smart Heating",
+  "codeowners": ["@VatzU", "@demonday", "@brianbola90", "@encryptix", "@sparkeh"],
   "config_flow": true,
-  "documentation": "https://www.home-assistant.io/integrations/climote",
-  "requirements": ["beautifulsoup4", "lxml", "polling", "xmljson"],
-  "ssdp": [],
-  "zeroconf": [],
-  "homekit": {},
-  "dependencies": [],
-  "codeowners": ["@VatzU", "@demonday", "@brianbola90", "@encryptix"],
-  "iot_class": "cloud_polling",
+  "documentation": "https://github.com/sparkeh/home-assistant-climote",
   "integration_type": "device",
-  "version": "2.0.0",
-  "loggers": ["custom_components.climate_climote"]
+  "iot_class": "cloud_polling",
+  "version": "3.0.0",
+  "requirements": ["beautifulsoup4", "lxml"],
+  "loggers": ["custom_components.climote"]
 }

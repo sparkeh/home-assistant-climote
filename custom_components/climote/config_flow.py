@@ -1,4 +1,4 @@
-"""Config flow for Climate Climote integration."""
+"""Config flow for the Climote integration."""
 from __future__ import annotations
 
 import logging
@@ -7,182 +7,206 @@ from typing import Any
 import voluptuous as vol
 
 from homeassistant import config_entries
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.exceptions import HomeAssistantError
 
-from .climote_service import ClimoteService
-from .climote_service_stub import ClimoteService as ClimoteServiceStub
+from .climote_service import ClimoteConnectionError, ClimoteService
 from .const import (
-    BOOST_DURATION,
-    CLIMOTE_ID,
+    CONF_BOOST_DURATION,
+    CONF_CLIMOTE_ID,
+    CONF_PASSWORD,
+    CONF_POLL_INTERVAL,
+    CONF_REFRESH_INTERVAL,
+    CONF_USERNAME,
+    DEFAULT_BOOST_DURATION,
+    DEFAULT_POLL_INTERVAL,
+    DEFAULT_REFRESH_INTERVAL,
     DOMAIN,
-    PASSWORD,
-    REFRESH_INTERVAL,
-    USERNAME,
+    MAX_POLL_INTERVAL,
+    MAX_REFRESH_INTERVAL,
+    MIN_POLL_INTERVAL,
+    MIN_REFRESH_INTERVAL,
     VALID_BOOST_VALUES,
-    TEST_MODE,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
-STEP_USER_DATA_SCHEMA = vol.Schema(
-    {
-        vol.Required(CLIMOTE_ID): str,
-        vol.Required(USERNAME): str,
-        vol.Required(PASSWORD): str,
-        vol.Required(BOOST_DURATION, default="0.5"): str,
-        vol.Required(REFRESH_INTERVAL, default=24): int,
-        vol.Required(TEST_MODE, default=False): bool,
-    }
-)
 
-
-async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str, Any]:
-    """Validate the user input allows us to connect.
-
-    Data has the keys from STEP_USER_DATA_SCHEMA with values provided by the user.
-    """
-    boost = str(float(data[BOOST_DURATION]))
-    if boost not in VALID_BOOST_VALUES:
-        raise InvalidDefaultBoost(f"{boost} is an invalid duration")
-    data[BOOST_DURATION] = boost
-
-    if data[TEST_MODE] is False:
-        climote = ClimoteService
-    else:
-        climote = ClimoteServiceStub
-
-    temp_climote_object = climote(
-        data[CLIMOTE_ID], data[USERNAME], data[PASSWORD], _LOGGER, 12, 1
+def _interval_validator(min_value: int, max_value: int):
+    return vol.All(
+        vol.Coerce(int), vol.Range(min=min_value, max=max_value)
     )
 
-    try:
-        auth_successful = await hass.async_add_executor_job(
-            temp_climote_object.test_authenticate
-        )
-    except climote.TimeoutException as exc:
-        raise CannotConnect from exc
 
-    if not auth_successful:
+def _user_schema() -> vol.Schema:
+    """Build the user step schema."""
+    return vol.Schema(
+        {
+            vol.Required(CONF_CLIMOTE_ID): str,
+            vol.Required(CONF_USERNAME): str,
+            vol.Required(CONF_PASSWORD): str,
+            vol.Required(
+                CONF_BOOST_DURATION, default=DEFAULT_BOOST_DURATION
+            ): vol.In(VALID_BOOST_VALUES),
+            vol.Required(
+                CONF_REFRESH_INTERVAL, default=DEFAULT_REFRESH_INTERVAL
+            ): _interval_validator(MIN_REFRESH_INTERVAL, MAX_REFRESH_INTERVAL),
+            vol.Required(
+                CONF_POLL_INTERVAL, default=DEFAULT_POLL_INTERVAL
+            ): _interval_validator(MIN_POLL_INTERVAL, MAX_POLL_INTERVAL),
+        }
+    )
+
+
+async def _validate_input(hass: HomeAssistant, data: dict[str, Any]) -> None:
+    """Validate that the user input allows us to connect."""
+    service = ClimoteService(
+        data[CONF_CLIMOTE_ID],
+        data[CONF_USERNAME],
+        data[CONF_PASSWORD],
+        default_boost_duration=data[CONF_BOOST_DURATION],
+    )
+    try:
+        logged_in = await service.async_login()
+    except ClimoteConnectionError as err:
+        raise CannotConnect from err
+    finally:
+        await service.close()
+
+    if not logged_in:
         raise InvalidAuth
 
-    # Return info that you want to store in the config entry.
-    return {"title": ClimoteService.sanitized_device_id(data[CLIMOTE_ID])}
 
-
-class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
-    """Handle a config flow for Climate Climote."""
+class ClimoteConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
+    """Handle a config flow for Climote."""
 
     VERSION = 1
-    CONNECTION_CLASS = config_entries.CONN_CLASS_CLOUD_POLL
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Handle the initial step."""
         if user_input is None:
-            return self.async_show_form(
-                step_id="user", data_schema=STEP_USER_DATA_SCHEMA
-            )
+            return self.async_show_form(step_id="user", data_schema=_user_schema())
 
-        errors = {}
-
-        if user_input.get(CLIMOTE_ID, None):
-            await self.async_set_unique_id("climote_" + user_input[CLIMOTE_ID])
-            self._abort_if_unique_id_configured()
-
+        errors: dict[str, str] = {}
         try:
-            info = await validate_input(self.hass, user_input)
+            await _validate_input(self.hass, user_input)
         except CannotConnect:
             errors["base"] = "cannot_connect"
         except InvalidAuth:
             errors["base"] = "invalid_auth"
-        except InvalidDefaultBoost:
-            errors["base"] = "invalid_boost"
-        except Exception:  # pylint: disable=broad-except
-            _LOGGER.exception("Unexpected exception")
+        except Exception:  # noqa: BLE001
+            _LOGGER.exception("Unexpected exception during Climote setup")
             errors["base"] = "unknown"
         else:
-            return self.async_create_entry(title=info["title"], data=user_input)
+            await self.async_set_unique_id(user_input[CONF_CLIMOTE_ID])
+            self._abort_if_unique_id_configured()
+            return self.async_create_entry(
+                title=ClimoteService.sanitized_device_id(user_input[CONF_CLIMOTE_ID]),
+                data=user_input,
+            )
 
         return self.async_show_form(
-            step_id="user", data_schema=STEP_USER_DATA_SCHEMA, errors=errors
+            step_id="user", data_schema=_user_schema(), errors=errors
         )
 
-    @staticmethod
-    @callback
-    def async_get_options_flow(
-        config_entry: config_entries.ConfigEntry,
-    ) -> config_entries.OptionsFlow:
-        """Create the options flow."""
-        return OptionsFlowHandler(config_entry)
-
-    # https://developers.home-assistant.io/docs/config_entries_config_flow_handler/#reauthentication
-    async def async_step_reauth(self, user_input=None):
+    async def async_step_reauth(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
         """Perform reauth upon an API authentication error."""
-        self.reauth_entry = self.hass.config_entries.async_get_entry(
+        self._reauth_entry = self.hass.config_entries.async_get_entry(
             self.context["entry_id"]
         )
         return await self.async_step_reauth_confirm()
 
-    async def async_step_reauth_confirm(self, user_input=None):
+    async def async_step_reauth_confirm(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
         """Dialog that informs the user that reauth is required."""
-        reauth_schema = vol.Schema(
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            updated = {
+                **self._reauth_entry.data,
+                CONF_USERNAME: user_input[CONF_USERNAME],
+                CONF_PASSWORD: user_input[CONF_PASSWORD],
+            }
+            try:
+                await _validate_input(self.hass, updated)
+            except CannotConnect:
+                errors["base"] = "cannot_connect"
+            except InvalidAuth:
+                errors["base"] = "invalid_auth"
+            except Exception:  # noqa: BLE001
+                _LOGGER.exception("Unexpected exception during Climote reauth")
+                errors["base"] = "unknown"
+            else:
+                return self.async_update_reload_and_abort(
+                    self._reauth_entry,
+                    data_updates={
+                        CONF_USERNAME: user_input[CONF_USERNAME],
+                        CONF_PASSWORD: user_input[CONF_PASSWORD],
+                    },
+                )
+
+        schema = vol.Schema(
             {
-                vol.Required(USERNAME, default=self.init_data.get(USERNAME)): str,
-                vol.Required(PASSWORD, default=self.init_data.get(PASSWORD)): str,
+                vol.Required(
+                    CONF_USERNAME, default=self._reauth_entry.data[CONF_USERNAME]
+                ): str,
+                vol.Required(CONF_PASSWORD): str,
             }
         )
+        return self.async_show_form(
+            step_id="reauth_confirm", data_schema=schema, errors=errors
+        )
 
-        if user_input is None:
-            return self.async_show_form(
-                step_id="reauth_confirm",
-                data_schema=reauth_schema,
-            )
-        return await self.async_step_user(user_input)
+    @staticmethod
+    def async_get_options_flow(
+        config_entry: config_entries.ConfigEntry,
+    ) -> config_entries.OptionsFlow:
+        """Create the options flow."""
+        return ClimoteOptionsFlow(config_entry)
 
 
-class OptionsFlowHandler(config_entries.OptionsFlow):
+class ClimoteOptionsFlow(config_entries.OptionsFlow):
+    """Handle options for the Climote integration."""
+
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         """Initialize options flow."""
-        self.config_entry = config_entry
+        self._entry = config_entry
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Manage the options."""
         if user_input is not None:
-            # Copy the data that wasn't up for modification
-            user_input[CLIMOTE_ID] = self.config_entry.data[CLIMOTE_ID]
-            user_input[BOOST_DURATION] = self.config_entry.data[BOOST_DURATION]
+            return self.async_create_entry(title="", data=user_input)
 
-            # This line taken from https://github.com/PeteRager/lennoxs30/blob/master/custom_components/lennoxs30/config_flow.py#L303 due to https://community.home-assistant.io/t/configflowhandler-and-optionsflowhandler-managing-the-same-parameter/365582/5
-            self.hass.config_entries.async_update_entry(
-                self.config_entry, data=user_input, options=self.config_entry.options
-            )
-            return self.async_create_entry(title="Update Climote", data=user_input)
-
-        update_data_schema = vol.Schema(
+        schema = vol.Schema(
             {
                 vol.Required(
-                    USERNAME, default=self.config_entry.data.get(USERNAME)
-                ): str,
+                    CONF_REFRESH_INTERVAL,
+                    default=self._entry.options.get(
+                        CONF_REFRESH_INTERVAL,
+                        self._entry.data.get(
+                            CONF_REFRESH_INTERVAL, DEFAULT_REFRESH_INTERVAL
+                        ),
+                    ),
+                ): _interval_validator(MIN_REFRESH_INTERVAL, MAX_REFRESH_INTERVAL),
                 vol.Required(
-                    PASSWORD, default=self.config_entry.data.get(PASSWORD)
-                ): str,
-                vol.Required(
-                    REFRESH_INTERVAL,
-                    default=self.config_entry.data.get(REFRESH_INTERVAL),
-                ): int,
-                vol.Required(
-                    TEST_MODE,
-                    default=self.config_entry.data.get(TEST_MODE),
-                ): bool,
+                    CONF_POLL_INTERVAL,
+                    default=self._entry.options.get(
+                        CONF_POLL_INTERVAL,
+                        self._entry.data.get(
+                            CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL
+                        ),
+                    ),
+                ): _interval_validator(MIN_POLL_INTERVAL, MAX_POLL_INTERVAL),
             }
         )
-
-        return self.async_show_form(step_id="init", data_schema=update_data_schema)
+        return self.async_show_form(step_id="init", data_schema=schema)
 
 
 class CannotConnect(HomeAssistantError):
@@ -191,7 +215,3 @@ class CannotConnect(HomeAssistantError):
 
 class InvalidAuth(HomeAssistantError):
     """Error to indicate there is invalid auth."""
-
-
-class InvalidDefaultBoost(HomeAssistantError):
-    """Error to indicate the user has chosen an invalid boost duration"""

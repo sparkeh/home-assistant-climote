@@ -1,44 +1,45 @@
 {
   "config": {
-    "abort": {
-      "already_configured": "Device is already configured",
-      "reauth_sucessful": "Successfully connected"
-    },
-    "error": {
-      "cannot_connect": "Failed to connect",
-      "invalid_auth": "Invalid authentication",
-      "invalid_boost": "Invalid default boost value",
-      "unknown": "Unexpected error"
-    },
     "step": {
       "user": {
+        "title": "Climote",
+        "description": "Log in with your Climote account. The Climote device number is printed on the SIM card holder in your welcome pack.",
         "data": {
-          "climote_id": "Climote #",
+          "climote_id": "Climote device number",
+          "username": "Email address",
           "password": "Password",
-          "username": "Username",
-          "interval": "Data Refresh Interval",
-          "boost": "Initial Boost Duration",
-          "test": "Enable Test Mode"
+          "boost_duration": "Default boost duration",
+          "refresh_interval": "Full refresh interval (hours)",
+          "poll_interval": "Status poll interval (minutes)"
         }
       },
       "reauth_confirm": {
-        "title": "Reauth Required",
-        "description": "The Climote integration needs to re-authenticate your account",
+        "title": "Reauthentication required",
+        "description": "The Climote integration needs to re-authenticate your account.",
         "data": {
-          "password": "Password",
-          "username": "Username"
+          "username": "Email address",
+          "password": "Password"
         }
       }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to Climote",
+      "invalid_auth": "Invalid authentication",
+      "unknown": "Unexpected error"
+    },
+    "abort": {
+      "already_configured": "This Climote device is already configured",
+      "reauth_successful": "Reauthentication was successful"
     }
   },
   "options": {
     "step": {
       "init": {
+        "title": "Climote options",
+        "description": "Full refreshes ask the hub to report its status over SMS and can take a couple of minutes. Status polls read the cached status and are free.",
         "data": {
-          "password": "Password",
-          "username": "Username",
-          "interval": "Data Refresh Interval",
-          "test": "Enable Test Mode"
+          "refresh_interval": "Full refresh interval (hours)",
+          "poll_interval": "Status poll interval (minutes)"
         }
       }
     }

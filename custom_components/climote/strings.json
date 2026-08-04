@@ -2,41 +2,44 @@
   "config": {
     "step": {
       "user": {
+        "title": "Climote",
+        "description": "Log in with your Climote account. The Climote device number is printed on the SIM card holder in your welcome pack.",
         "data": {
-          "climote_id": "[%key:common::config_flow::data::climote_id%]",
-          "username": "[%key:common::config_flow::data::username%]",
-          "password": "[%key:common::config_flow::data::password%]",
-          "interval": "[%key:common::config_flow::data::interval%]",
-          "boost": "[%key:common::config_flow::data::boost%]",
-          "test": "[%key:common::config_flow::data::test%]"
+          "climote_id": "Climote device number",
+          "username": "Email address",
+          "password": "Password",
+          "boost_duration": "Default boost duration",
+          "refresh_interval": "Full refresh interval (hours)",
+          "poll_interval": "Status poll interval (minutes)"
         }
       },
       "reauth_confirm": {
-        "title": "[%key:common::config_flow::title::reauth%]",
-        "description": "[%key:common::config_flow::data::description%]",
-        "username": "[%key:common::config_flow::data::username%]",
-        "password": "[%key:common::config_flow::data::password%]"
+        "title": "Reauthentication required",
+        "description": "The Climote integration needs to re-authenticate your account.",
+        "data": {
+          "username": "Email address",
+          "password": "Password"
+        }
       }
     },
     "error": {
-      "cannot_connect": "[%key:common::config_flow::error::cannot_connect%]",
-      "invalid_auth": "[%key:common::config_flow::error::invalid_auth%]",
-      "invalid_boost": "[%key:common::config_flow::error::invalid_boost%]",
-      "unknown": "[%key:common::config_flow::error::unknown%]"
+      "cannot_connect": "Failed to connect to Climote",
+      "invalid_auth": "Invalid authentication",
+      "unknown": "Unexpected error"
     },
     "abort": {
-      "already_configured": "[%key:common::config_flow::abort::already_configured_device%]",
-      "reauth_successful": "[%key:common::config_flow::abort::reauth_successful%]"
+      "already_configured": "This Climote device is already configured",
+      "reauth_successful": "Reauthentication was successful"
     }
   },
   "options": {
     "step": {
       "init": {
+        "title": "Climote options",
+        "description": "Full refreshes ask the hub to report its status over SMS and can take a couple of minutes. Status polls read the cached status and are free.",
         "data": {
-          "interval": "[%key:common::config_flow::data::interval%]",
-          "username": "[%key:common::config_flow::data::username%]",
-          "password": "[%key:common::config_flow::data::password%]",
-          "test": "[%key:common::config_flow::data::test%]"
+          "refresh_interval": "Full refresh interval (hours)",
+          "poll_interval": "Status poll interval (minutes)"
         }
       }
     }

@@ -1,7 +1,5 @@
-"""The Climate Climote integration."""
+"""The Climote integration."""
 from __future__ import annotations
-
-import logging
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
@@ -9,101 +7,63 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 
 from .climote_service import ClimoteService
-from .climote_service_stub import ClimoteService as ClimoteServiceStub
 from .const import (
-    BOOST_DURATION,
-    CLIMOTE_ID,
+    CONF_BOOST_DURATION,
+    CONF_CLIMOTE_ID,
+    CONF_PASSWORD,
+    CONF_USERNAME,
+    DEFAULT_BOOST_DURATION,
     DOMAIN,
-    PASSWORD,
-    REFRESH_INTERVAL,
-    USERNAME,
-    TEST_MODE,
 )
+from .coordinator import ClimoteCoordinator
 
-_LOGGER = logging.getLogger(__name__)
-PLATFORMS: list[Platform] = [
-    Platform.CLIMATE,
-    Platform.SELECT,
-    Platform.SENSOR,
-]
-
-# Signal Updates https://developers.home-assistant.io/docs/config_entries_options_flow_handler/#signal-updates
-async def update_listener(hass, entry):
-    """Handle options update."""
-
-    climoteid = entry.data[CLIMOTE_ID]
-
-    username = entry.data[USERNAME]
-    password = entry.data[PASSWORD]
-    refresh_interval = entry.data[REFRESH_INTERVAL]
-    test_mode = entry.data[TEST_MODE]
-    if test_mode is False:
-        climote = ClimoteService
-    else:
-        climote = ClimoteServiceStub
-
-    climote.update_instance(climoteid, username, password, refresh_interval)
+PLATFORMS = [Platform.CLIMATE, Platform.SELECT, Platform.SENSOR]
 
 
-def get_climote_instance(entry):
-    climoteid = entry.data[CLIMOTE_ID]
-
-    username = entry.data[USERNAME]
-    password = entry.data[PASSWORD]
-    refresh_interval = entry.data[REFRESH_INTERVAL]
-    default_boost_duration = entry.data[BOOST_DURATION]
-    test_mode = entry.data[TEST_MODE]
-    if test_mode is False:
-        climote = ClimoteService
-    else:
-        climote = ClimoteServiceStub
-
-    climote_svc = climote.get_instance(
-        climoteid,
-        username,
-        password,
-        _LOGGER,
-        refresh_interval=refresh_interval,
-        default_boost_duration=default_boost_duration,
-    )
-
-    return climote_svc
-
-
-# This seems to replace async_setup (which was used for configuration.yaml based settings)
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Set up Climate Climote from a config entry."""
+    """Set up Climote from a config entry."""
     hass.data.setdefault(DOMAIN, {})
 
-    _LOGGER.info(f"async_setup_entry UniqueID [{entry.unique_id}] Data [{entry.data}]")
+    climote = ClimoteService(
+        entry.data[CONF_CLIMOTE_ID],
+        entry.data[CONF_USERNAME],
+        entry.data[CONF_PASSWORD],
+        default_boost_duration=entry.data.get(
+            CONF_BOOST_DURATION, DEFAULT_BOOST_DURATION
+        ),
+    )
 
-    entry.async_on_unload(entry.add_update_listener(update_listener))
+    coordinator = ClimoteCoordinator(hass, entry, climote)
 
-    # 1. Create API instance
-    climote_svc = get_climote_instance(entry)
-
-    # 2. Validate the API connection (and authentication)
     try:
-        init_successful = await hass.async_add_executor_job(climote_svc.initialize)
-    except climote_svc.TimeoutException as ex:
-        raise ConfigEntryNotReady(ex) from ex
+        await coordinator.async_config_entry_first_refresh()
+    except ConfigEntryAuthFailed as err:
+        await climote.close()
+        raise ConfigEntryAuthFailed from err
+    except ConfigEntryNotReady as err:
+        await climote.close()
+        raise ConfigEntryNotReady from err
 
-    if not init_successful:
-        raise ConfigEntryAuthFailed("Credentials were not accepted")
+    entry.async_on_unload(entry.add_update_listener(_async_update_listener))
+    entry.async_on_unload(climote.close)
 
-    # 3. Store an API object for your platforms to access
-    # TODO consider using a coordinator rather than class and singleton directly
-    hass.data[DOMAIN][entry.entry_id] = climote_svc
+    hass.data[DOMAIN][entry.entry_id] = coordinator
 
-    # 4. Delegate setup to platforms
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     return True
 
 
+async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Handle options updates."""
+    if coordinator := hass.data.get(DOMAIN, {}).get(entry.entry_id):
+        await coordinator.async_update_settings()
+
+
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
-    if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
+    if unload_ok := await hass.config_entries.async_unload_platforms(
+        entry, PLATFORMS
+    ):
         hass.data[DOMAIN].pop(entry.entry_id)
-
     return unload_ok
