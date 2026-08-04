@@ -18,8 +18,6 @@ import re
 from typing import Any
 
 import aiohttp
-from bs4 import BeautifulSoup
-from lxml import etree
 
 from .const import DEFAULT_BOOST_DURATION
 
@@ -155,6 +153,8 @@ class ClimoteService:
     @staticmethod
     def _extract_csrf_token(text: str) -> str:
         """Find the CSRF token used by the boost/temperature forms."""
+        from bs4 import BeautifulSoup
+
         soup = BeautifulSoup(text, "html.parser")
         for element in soup.find_all("input"):
             if element.get("name") == "cs_token_rf" and element.get("value"):
@@ -241,6 +241,12 @@ class ClimoteService:
             return {}
 
         try:
+            from lxml import etree
+        except ImportError as err:
+            _LOGGER.error("lxml is required to fetch the heating schedule: %s", err)
+            return {}
+
+        try:
             root = etree.fromstring(text.encode("utf-8"))
         except etree.XMLSyntaxError as err:
             _LOGGER.error("Could not parse heating schedule: %s", err)
@@ -257,6 +263,8 @@ class ClimoteService:
     @staticmethod
     def _local_child_text(node: etree._Element, name: str) -> str | None:
         """Return text of a direct child element matched by local name."""
+        from lxml import etree
+
         for child in node:
             if etree.QName(child).localname == name:
                 return child.text
