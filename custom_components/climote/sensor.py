@@ -1,8 +1,6 @@
 """Sensor platform for the Climote integration."""
 from __future__ import annotations
 
-from typing import Any
-
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfTime
@@ -10,6 +8,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
+from .climote_service import zone_boost_minutes
 from .const import DOMAIN
 from .coordinator import ClimoteCoordinator, climote_device_info
 
@@ -47,14 +46,8 @@ class ClimoteBoostRemaining(CoordinatorEntity[ClimoteCoordinator], SensorEntity)
         self._attr_device_info = climote_device_info(coordinator.climote.device_id)
 
     @property
-    def native_value(self) -> float | None:
+    def native_value(self) -> float:
         """Return the boost time remaining in minutes."""
-        value: Any = self.coordinator.data.get(
-            f"zone{self._zone_id}", {}
-        ).get("timeRemaining")
-        if value is None:
-            return None
-        try:
-            return float(value)
-        except (TypeError, ValueError):
-            return None
+        return zone_boost_minutes(
+            self.coordinator.data.get(f"zone{self._zone_id}", {})
+        )

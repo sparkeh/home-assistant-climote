@@ -136,11 +136,11 @@ class ClimoteCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self._refresh_task = None
 
     def schedule_forced_refresh(self) -> None:
-        """Trigger a full refresh in the background (used after commands)."""
-        if self._refresh_task is None:
-            self._refresh_task = self.hass.async_create_task(
-                self._async_forced_refresh()
-            )
+        """Trigger a full refresh in the background (used after commands).
+
+        Always queued: a refresh already running may predate this command.
+        """
+        self._refresh_task = self.hass.async_create_task(self._async_forced_refresh())
 
     async def _async_forced_refresh(self) -> None:
         task = asyncio.current_task()

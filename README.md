@@ -34,7 +34,7 @@ Climote** and fill in:
 | Climote device number       | The number printed on the SIM card holder in your welcome pack (not your phone number) |
 | Email address               | The email used to register your Climote account              |
 | Password                    | Your Climote account password                                |
-| Default boost duration      | How long a boost runs when you switch a zone to heat (0.5–9 h) |
+| Default boost duration      | How long a boost runs when you switch a zone to heat (0.5–6 h) |
 | Full refresh interval       | How often the hub is asked to report its status over SMS (hours) |
 | Status poll interval        | How often the cached status is polled (minutes)              |
 

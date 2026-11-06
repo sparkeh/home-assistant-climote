@@ -13,9 +13,11 @@ from homeassistant.components.climate import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import ATTR_TEMPERATURE, PRECISION_WHOLE, UnitOfTemperature
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
+from .climote_service import ClimoteError, zone_boost_minutes
 from .const import DOMAIN
 from .coordinator import ClimoteCoordinator, climote_device_info
 
@@ -34,6 +36,10 @@ async def async_setup_entry(
         ClimoteClimate(coordinator, zone_id, region)
         for zone_id, region in coordinator.climote.zones.items()
     )
+
+
+# Web UI burner codes whose status indicator is not "off": 2 clock, 3 on, 5/7 boost.
+_ACTIVE_BURNER_CODES = (2, 3, 5, 7)
 
 
 def _to_temperature(value: Any) -> float | None:
@@ -73,15 +79,16 @@ class ClimoteClimate(CoordinatorEntity[ClimoteCoordinator], ClimateEntity):
     @property
     def hvac_mode(self) -> HVACMode:
         """Return the current operating mode."""
-        return (
-            HVACMode.HEAT if self._zone_data.get("status") == "5" else HVACMode.OFF
-        )
+        return HVACMode.HEAT if zone_boost_minutes(self._zone_data) else HVACMode.OFF
 
     @property
     def hvac_action(self) -> HVACAction:
         """Return the current running action."""
+        zone = self._zone_data
         return (
-            HVACAction.HEATING if self._zone_data.get("burner") == 1 else HVACAction.IDLE
+            HVACAction.HEATING
+            if zone_boost_minutes(zone) or zone.get("burner") in _ACTIVE_BURNER_CODES
+            else HVACAction.IDLE
         )
 
     @property
@@ -97,16 +104,18 @@ class ClimoteClimate(CoordinatorEntity[ClimoteCoordinator], ClimateEntity):
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
         """Set the operating mode."""
         climote = self.coordinator.climote
-        if hvac_mode == HVACMode.HEAT:
-            _LOGGER.info("Boosting zone %s", self._zone_id)
-            success = await climote.async_boost(self._zone_id)
-        elif hvac_mode == HVACMode.OFF:
-            _LOGGER.info("Turning off zone %s", self._zone_id)
-            success = await climote.async_turn_off(self._zone_id)
-        else:
-            return
-        if success:
-            self.coordinator.schedule_forced_refresh()
+        try:
+            if hvac_mode == HVACMode.HEAT:
+                _LOGGER.info("Boosting zone %s", self._zone_id)
+                await climote.async_boost(self._zone_id)
+            elif hvac_mode == HVACMode.OFF:
+                _LOGGER.info("Turning off zone %s", self._zone_id)
+                await climote.async_turn_off(self._zone_id)
+            else:
+                return
+        except ClimoteError as err:
+            raise HomeAssistantError(f"Climote command failed: {err}") from err
+        self.coordinator.schedule_forced_refresh()
 
     async def async_set_temperature(self, **kwargs: Any) -> None:
         """Set the target temperature."""
@@ -114,8 +123,10 @@ class ClimoteClimate(CoordinatorEntity[ClimoteCoordinator], ClimateEntity):
         if temperature is None:
             return
         _LOGGER.info("Setting zone %s temperature to %s", self._zone_id, temperature)
-        success = await self.coordinator.climote.async_set_target_temperature(
-            self._zone_id, float(temperature)
-        )
-        if success:
-            self.coordinator.schedule_forced_refresh()
+        try:
+            await self.coordinator.climote.async_set_target_temperature(
+                self._zone_id, float(temperature)
+            )
+        except ClimoteError as err:
+            raise HomeAssistantError(f"Climote command failed: {err}") from err
+        self.coordinator.schedule_forced_refresh()
