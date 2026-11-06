@@ -13,19 +13,8 @@ DEFAULT_BOOST_DURATION = "0.5"
 DEFAULT_REFRESH_INTERVAL = 24
 DEFAULT_POLL_INTERVAL = 5
 
-# Boost durations (hours) offered by the Climote web UI.
-VALID_BOOST_VALUES = [
-    "0.5",
-    "1.0",
-    "2.0",
-    "3.0",
-    "4.0",
-    "5.0",
-    "6.0",
-    "7.0",
-    "8.0",
-    "9.0",
-]
+# Boost durations (hours) offered by the Climote web form.
+VALID_BOOST_VALUES = ["0.5", "1", "2", "3", "4", "5", "6"]
 
 MIN_REFRESH_INTERVAL = 1
 MAX_REFRESH_INTERVAL = 168

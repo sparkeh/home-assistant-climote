@@ -58,6 +58,19 @@ class ClimoteRefreshTimeout(ClimoteError):
     """Timed out waiting for the hub to report its status."""
 
 
+def zone_boost_minutes(zone: dict[str, Any]) -> float:
+    """Return the minutes of boost left on a zone, 0 if it is not boosting.
+
+    Forced reports use "timeRemaining" (-1 once stopped, while "status" stays
+    "5"). The cached status uses "boost" ("00" when idle). "status" alone is
+    therefore not a reliable indicator.
+    """
+    try:
+        return max(float(zone.get("timeRemaining") or zone.get("boost") or 0), 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 class ClimoteService:
     """Communicates with the Climote web interface."""
 
@@ -84,7 +97,9 @@ class ClimoteService:
             "passcode": password,
         }
 
-        self.default_boost_duration = default_boost_duration
+        # Entries saved by older versions can hold "1.0" or up to "9.0"; the web
+        # form only accepts "0.5", "1" ... "6".
+        self.default_boost_duration = f"{min(float(default_boost_duration), 6):g}"
         self._zones_boost_duration: dict[int, str] = {}
 
         self.logged_in = False
@@ -181,10 +196,14 @@ class ClimoteService:
         if text == "0":
             return None
         try:
-            return json.loads(text)
+            data = json.loads(text)
+            # Unlike a forced report, the cached status is JSON encoded twice.
+            if isinstance(data, str):
+                data = json.loads(data)
         except (json.JSONDecodeError, ValueError):
             _LOGGER.debug("Cached status response was not JSON", exc_info=True)
             return None
+        return data if isinstance(data, dict) else None
 
     async def async_request_status_refresh(self) -> dict[str, Any]:
         """Ask the hub to report its status and wait for the result.
@@ -192,18 +211,28 @@ class ClimoteService:
         This triggers an SMS round trip to the hub, so it can take up to two
         minutes to return.
         """
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + _STATUS_POLL_TIMEOUT
         try:
-            async with self._session.post(
-                _STATUS_URL, params={"force": 1}, data=self._creds
-            ) as resp:
-                await resp.text()
-            if resp.status != 200:
-                raise ClimoteConnectionError(
-                    f"Status refresh returned HTTP {resp.status}"
-                )
+            while True:
+                async with self._session.post(
+                    _STATUS_URL, params={"force": 1}, data=self._creds
+                ) as resp:
+                    text = await resp.text()
+                if resp.status != 200:
+                    raise ClimoteConnectionError(
+                        f"Status refresh returned HTTP {resp.status}"
+                    )
+                if "loginForm" in text:
+                    raise ClimoteConnectionError("Climote session has expired")
+                if "awaiting" in text:
+                    break
+                # Soon after a report, force=1 returns it without asking the hub,
+                # so it would not include a command that was only just sent.
+                if loop.time() >= deadline:
+                    raise ClimoteRefreshTimeout("The hub was not asked for its status")
+                await asyncio.sleep(_STATUS_POLL_INTERVAL)
 
-            loop = asyncio.get_running_loop()
-            deadline = loop.time() + _STATUS_POLL_TIMEOUT
             headers = {"X-Requested-With": "XMLHttpRequest"}
             while loop.time() < deadline:
                 async with self._session.post(
@@ -270,36 +299,38 @@ class ClimoteService:
                 return child.text
         return None
 
-    async def async_boost(self, zone: int) -> bool:
+    async def _async_command(self, url: str, data: dict[str, Any]) -> None:
+        """Post a web form, logging in again if the session has expired."""
+        for _ in range(2):
+            try:
+                async with self._session.post(
+                    url, data={**data, "cs_token_rf": self._token}
+                ) as resp:
+                    text = await resp.text()
+            except (aiohttp.ClientError, asyncio.TimeoutError) as err:
+                raise ClimoteConnectionError(f"Could not reach Climote: {err}") from err
+            if resp.status != 200:
+                raise ClimoteError(f"Climote returned HTTP {resp.status}")
+            # An expired session redirects to the login page, which is also a 200.
+            if "loginForm" not in text:
+                return
+            if not await self.async_login():
+                raise ClimoteAuthenticationError("Login failed")
+        raise ClimoteError("Climote did not accept the session after logging in")
+
+    async def async_boost(self, zone: int) -> None:
         """Start a boost (heat on) for a zone."""
-        data = {
-            f"zoneIds[{zone}]": self.get_zone_boost_duration(zone),
-            "cs_token_rf": self._token,
-        }
-        try:
-            async with self._session.post(_BOOST_URL, data=data) as resp:
-                return resp.status == 200
-        except (aiohttp.ClientError, asyncio.TimeoutError) as err:
-            raise ClimoteConnectionError(f"Could not reach Climote: {err}") from err
+        await self._async_command(
+            _BOOST_URL, {f"zoneIds[{zone}]": self.get_zone_boost_duration(zone)}
+        )
 
-    async def async_turn_off(self, zone: int) -> bool:
-        """Turn the heat off for a zone."""
-        data = {f"zoneIds[{zone}]": "0", "cs_token_rf": self._token}
-        try:
-            async with self._session.post(_BOOST_URL, data=data) as resp:
-                return resp.status == 200
-        except (aiohttp.ClientError, asyncio.TimeoutError) as err:
-            raise ClimoteConnectionError(f"Could not reach Climote: {err}") from err
+    async def async_turn_off(self, zone: int) -> None:
+        """Stop the boost for a zone."""
+        await self._async_command(_BOOST_URL, {f"zoneIds[{zone}]": "stop"})
 
-    async def async_set_target_temperature(self, zone: int, temperature: float) -> bool:
+    async def async_set_target_temperature(self, zone: int, temperature: float) -> None:
         """Set the target temperature for a zone."""
-        data = {
-            f"temp-set-input[{zone}]": temperature,
-            "do": "Set",
-            "cs_token_rf": self._token,
-        }
-        try:
-            async with self._session.post(_SET_TEMP_URL, data=data) as resp:
-                return resp.status == 200
-        except (aiohttp.ClientError, asyncio.TimeoutError) as err:
-            raise ClimoteConnectionError(f"Could not reach Climote: {err}") from err
+        # The web form offers whole degrees, so "19", not "19.0".
+        await self._async_command(
+            _SET_TEMP_URL, {f"temp-set-input[{zone}]": int(temperature), "do": "Set"}
+        )
